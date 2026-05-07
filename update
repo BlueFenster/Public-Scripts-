@@ -9,7 +9,7 @@ local lighting = game:GetService("Lighting")
 local coreGui = game:GetService("CoreGui")
 
 -- // settings
-local baseSpeed = 140 
+local baseSpeed = 1000
 local baseAccel = 0.4 
 local baseDecel = 1.2 
 local currentMaxSpeed = baseSpeed

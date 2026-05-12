@@ -1,0 +1,673 @@
+local player = game:GetService("Players").LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+local userInputService = game:GetService("UserInputService")
+local runService = game:GetService("RunService")
+local coreGui = game:GetService("CoreGui")
+
+--------------------------------------------------------------------
+-- REMOVE OLD GUI
+--------------------------------------------------------------------
+
+if coreGui:FindFirstChild("Manual_Pro_Core_System") then
+	coreGui:FindFirstChild("Manual_Pro_Core_System"):Destroy()
+end
+
+--------------------------------------------------------------------
+-- MAIN GUI
+--------------------------------------------------------------------
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "Manual_Pro_Core_System"
+screenGui.IgnoreGuiInset = true
+screenGui.ResetOnSpawn = false
+screenGui.Enabled = false
+screenGui.Parent = coreGui
+
+--------------------------------------------------------------------
+-- SETTINGS
+--------------------------------------------------------------------
+
+local defaultSettings = {
+	MaxSpeed = 180,
+	TurningSpeed = 3,
+	Friction = 0.002,
+	Suspension = 9000,
+	Damping = 800,
+	ReverseSpeed = -30,
+	Acceleration = 0.15
+}
+
+local currentMaxSpeed = defaultSettings.MaxSpeed
+local inertiaFriction = defaultSettings.Friction
+local turningSpeed = defaultSettings.TurningSpeed
+local stiffness = defaultSettings.Suspension
+local damping = defaultSettings.Damping
+local reverseSpeed = defaultSettings.ReverseSpeed
+local acceleration = defaultSettings.Acceleration
+
+--------------------------------------------------------------------
+-- VARIABLES
+--------------------------------------------------------------------
+
+local isDriving = false
+local keysPressed = {W = false, A = false, S = false, D = false}
+
+local targetDistance = 0.25
+local lastVerticalError = 0
+
+local tyreTemps = {40, 40, 40, 40}
+local tyreFrames, tyreLabels = {}, {}
+local tempTimers = {0, 0, 0, 0}
+
+local carBase, bodyVelocity, bodyGyro, bodyForce
+local idleSound, moveSound, driftSound, brakeSound
+local currentSpeed = 0
+local targetRotation = 0
+local driftSmokeEmitter
+local wasBraking = false
+
+--------------------------------------------------------------------
+-- SETTINGS BUTTON
+--------------------------------------------------------------------
+
+local settingsButton = Instance.new("TextButton")
+settingsButton.Parent = screenGui
+settingsButton.Size = UDim2.new(0,120,0,40)
+settingsButton.Position = UDim2.new(0.02,0,0.12,0)
+settingsButton.BackgroundColor3 = Color3.fromRGB(0,120,255)
+settingsButton.Text = "SETTINGS"
+settingsButton.TextColor3 = Color3.new(1,1,1)
+settingsButton.TextScaled = true
+settingsButton.Font = Enum.Font.Code
+
+Instance.new("UICorner", settingsButton)
+
+--------------------------------------------------------------------
+-- SETTINGS FRAME
+--------------------------------------------------------------------
+
+local settingsFrame = Instance.new("Frame")
+settingsFrame.Parent = screenGui
+settingsFrame.Size = UDim2.new(0,260,0,370)
+settingsFrame.Position = UDim2.new(0.02,0,0.18,0)
+settingsFrame.BackgroundColor3 = Color3.fromRGB(15,15,15)
+settingsFrame.BackgroundTransparency = 0.15
+settingsFrame.Visible = false
+
+Instance.new("UICorner", settingsFrame)
+
+local frameStroke = Instance.new("UIStroke")
+frameStroke.Parent = settingsFrame
+frameStroke.Color = Color3.fromRGB(0,255,255)
+frameStroke.Thickness = 2
+
+--------------------------------------------------------------------
+-- TITLE
+--------------------------------------------------------------------
+
+local title = Instance.new("TextLabel")
+title.Parent = settingsFrame
+title.Size = UDim2.new(1,0,0,35)
+title.BackgroundTransparency = 1
+title.Text = "F1 SETTINGS"
+title.TextColor3 = Color3.new(1,1,1)
+title.Font = Enum.Font.Code
+title.TextScaled = true
+
+--------------------------------------------------------------------
+-- CREATE SETTING
+--------------------------------------------------------------------
+
+local function createSetting(name, posY, value)
+
+	local label = Instance.new("TextLabel")
+	label.Parent = settingsFrame
+	label.Size = UDim2.new(0.45,0,0,30)
+	label.Position = UDim2.new(0.03,0,0,posY)
+	label.BackgroundTransparency = 1
+	label.Text = name
+	label.TextColor3 = Color3.new(1,1,1)
+	label.Font = Enum.Font.Code
+	label.TextScaled = true
+
+	local box = Instance.new("TextBox")
+	box.Parent = settingsFrame
+	box.Size = UDim2.new(0.45,0,0,30)
+	box.Position = UDim2.new(0.5,0,0,posY)
+	box.BackgroundColor3 = Color3.fromRGB(30,30,30)
+	box.TextColor3 = Color3.new(1,1,1)
+	box.Font = Enum.Font.Code
+	box.TextScaled = true
+	box.Text = tostring(value)
+
+	Instance.new("UICorner", box)
+
+	return box
+end
+
+--------------------------------------------------------------------
+-- SETTING BOXES
+--------------------------------------------------------------------
+
+local speedBox = createSetting("Max Speed", 50, currentMaxSpeed)
+local turnBox = createSetting("Turning", 90, turningSpeed)
+local frictionBox = createSetting("Friction", 130, inertiaFriction)
+local suspensionBox = createSetting("Suspension", 170, stiffness)
+local dampingBox = createSetting("Damping", 210, damping)
+local reverseBox = createSetting("Reverse Speed", 250, math.abs(reverseSpeed))
+local accelBox = createSetting("Acceleration", 290, acceleration)
+
+--------------------------------------------------------------------
+-- APPLY BUTTON
+--------------------------------------------------------------------
+
+local applyButton = Instance.new("TextButton")
+applyButton.Parent = settingsFrame
+applyButton.Size = UDim2.new(0.42,0,0,35)
+applyButton.Position = UDim2.new(0.05,0,0,330)
+applyButton.BackgroundColor3 = Color3.fromRGB(0,180,100)
+applyButton.Text = "APPLY"
+applyButton.TextColor3 = Color3.new(1,1,1)
+applyButton.Font = Enum.Font.Code
+applyButton.TextScaled = true
+
+Instance.new("UICorner", applyButton)
+
+--------------------------------------------------------------------
+-- RESET BUTTON
+--------------------------------------------------------------------
+
+local resetButton = Instance.new("TextButton")
+resetButton.Parent = settingsFrame
+resetButton.Size = UDim2.new(0.42,0,0,35)
+resetButton.Position = UDim2.new(0.53,0,0,330)
+resetButton.BackgroundColor3 = Color3.fromRGB(180,50,50)
+resetButton.Text = "RESET"
+resetButton.TextColor3 = Color3.new(1,1,1)
+resetButton.Font = Enum.Font.Code
+resetButton.TextScaled = true
+
+Instance.new("UICorner", resetButton)
+
+--------------------------------------------------------------------
+-- SETTINGS FUNCTIONS
+--------------------------------------------------------------------
+
+settingsButton.MouseButton1Click:Connect(function()
+	settingsFrame.Visible = not settingsFrame.Visible
+end)
+
+applyButton.MouseButton1Click:Connect(function()
+
+	currentMaxSpeed = tonumber(speedBox.Text) or currentMaxSpeed
+	turningSpeed = tonumber(turnBox.Text) or turningSpeed
+	inertiaFriction = tonumber(frictionBox.Text) or inertiaFriction
+	stiffness = tonumber(suspensionBox.Text) or stiffness
+	damping = tonumber(dampingBox.Text) or damping
+
+	reverseSpeed = -(tonumber(reverseBox.Text) or math.abs(reverseSpeed))
+	acceleration = tonumber(accelBox.Text) or acceleration
+
+	print("Applied Settings")
+end)
+
+resetButton.MouseButton1Click:Connect(function()
+
+	currentMaxSpeed = defaultSettings.MaxSpeed
+	turningSpeed = defaultSettings.TurningSpeed
+	inertiaFriction = defaultSettings.Friction
+	stiffness = defaultSettings.Suspension
+	damping = defaultSettings.Damping
+	reverseSpeed = defaultSettings.ReverseSpeed
+	acceleration = defaultSettings.Acceleration
+
+	speedBox.Text = tostring(currentMaxSpeed)
+	turnBox.Text = tostring(turningSpeed)
+	frictionBox.Text = tostring(inertiaFriction)
+	suspensionBox.Text = tostring(stiffness)
+	dampingBox.Text = tostring(damping)
+	reverseBox.Text = tostring(math.abs(reverseSpeed))
+	accelBox.Text = tostring(acceleration)
+
+	print("Reset Settings")
+end)
+
+--------------------------------------------------------------------
+-- TYRE TEMP DISPLAY
+--------------------------------------------------------------------
+
+for i = 1, 4 do
+
+	local frame = Instance.new("Frame", screenGui)
+
+	frame.Size = UDim2.new(0,32,0,55)
+
+	if i == 1 then
+		frame.Position = UDim2.new(0.87,0,0.35,0)
+
+	elseif i == 2 then
+		frame.Position = UDim2.new(0.93,0,0.35,0)
+
+	elseif i == 3 then
+		frame.Position = UDim2.new(0.87,0,0.47,0)
+
+	else
+		frame.Position = UDim2.new(0.93,0,0.47,0)
+	end
+
+	frame.BackgroundColor3 = Color3.fromRGB(0,200,255)
+
+	Instance.new("UICorner", frame)
+
+	tyreFrames[i] = frame
+
+	local label = Instance.new("TextLabel", frame)
+	label.Size = UDim2.new(2,0,0.6,0)
+	label.Position = UDim2.new(-0.5,0,1.1,0)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.new(1,1,1)
+	label.Font = Enum.Font.Code
+	label.TextScaled = true
+
+	tyreLabels[i] = label
+end
+
+--------------------------------------------------------------------
+-- SPEED DIAL
+--------------------------------------------------------------------
+
+local dial = Instance.new("Frame", screenGui)
+dial.Size = UDim2.new(0.15,0,0.08,0)
+dial.Position = UDim2.new(0.425,0,0.05,0)
+dial.BackgroundColor3 = Color3.fromRGB(0,0,0)
+dial.BackgroundTransparency = 0.4
+
+Instance.new("UICorner", dial)
+
+local speedText = Instance.new("TextLabel", dial)
+speedText.Size = UDim2.new(1,0,1,0)
+speedText.BackgroundTransparency = 1
+speedText.TextColor3 = Color3.new(1,1,1)
+speedText.Font = Enum.Font.Code
+speedText.TextScaled = true
+speedText.Text = "0"
+
+--------------------------------------------------------------------
+-- DRIFT SMOKE
+--------------------------------------------------------------------
+
+local function createDriftSmokeEmitter()
+
+	local emitter = Instance.new("ParticleEmitter")
+
+	emitter.Texture = "rbxasset://textures/particles/smoke_main.dds"
+
+	emitter.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0,0.2),
+		NumberSequenceKeypoint.new(1,1)
+	})
+
+	emitter.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0,0.4),
+		NumberSequenceKeypoint.new(1,1.2)
+	})
+
+	emitter.Lifetime = NumberRange.new(0.1,0.3)
+	emitter.Speed = NumberRange.new(5,15)
+	emitter.Rate = 0
+	emitter.Parent = rootPart
+
+	return emitter
+end
+
+--------------------------------------------------------------------
+-- MOBILE BUTTONS
+--------------------------------------------------------------------
+
+local function createBtn(name,pos,size,text,color,key)
+
+	local btn = Instance.new("TextButton", screenGui)
+
+	btn.Name = name
+	btn.Size = size
+	btn.Position = pos
+	btn.BackgroundColor3 = Color3.fromRGB(20,20,20)
+	btn.BackgroundTransparency = 0.4
+	btn.Text = text
+	btn.TextColor3 = Color3.new(1,1,1)
+	btn.TextScaled = true
+
+	Instance.new("UICorner", btn)
+
+	local stroke = Instance.new("UIStroke", btn)
+	stroke.Thickness = 2
+	stroke.Color = color
+
+	btn.MouseButton1Down:Connect(function()
+		keysPressed[key] = true
+	end)
+
+	btn.MouseButton1Up:Connect(function()
+		keysPressed[key] = false
+	end)
+
+	return btn
+end
+
+createBtn("BtnA", UDim2.new(0.05,0,0.72,0), UDim2.new(0.09,0,0.13,0), "◀", Color3.fromRGB(0,150,255), "A")
+createBtn("BtnD", UDim2.new(0.15,0,0.72,0), UDim2.new(0.09,0,0.13,0), "▶", Color3.fromRGB(0,150,255), "D")
+createBtn("BtnS", UDim2.new(0.72,0,0.82,0), UDim2.new(0.09,0,0.13,0), "▼", Color3.fromRGB(255,50,50), "S")
+createBtn("BtnW", UDim2.new(0.85,0,0.68,0), UDim2.new(0.09,0,0.13,0), "▲", Color3.fromRGB(0,255,100), "W")
+
+--------------------------------------------------------------------
+-- KEYBOARD INPUT
+--------------------------------------------------------------------
+
+userInputService.InputBegan:Connect(function(input,gpe)
+
+	if gpe then return end
+
+	local k = input.KeyCode
+
+	if k == Enum.KeyCode.W then
+		keysPressed.W = true
+
+	elseif k == Enum.KeyCode.S then
+		keysPressed.S = true
+
+	elseif k == Enum.KeyCode.A then
+		keysPressed.A = true
+
+	elseif k == Enum.KeyCode.D then
+		keysPressed.D = true
+	end
+end)
+
+userInputService.InputEnded:Connect(function(input)
+
+	local k = input.KeyCode
+
+	if k == Enum.KeyCode.W then
+		keysPressed.W = false
+
+	elseif k == Enum.KeyCode.S then
+		keysPressed.S = false
+
+	elseif k == Enum.KeyCode.A then
+		keysPressed.A = false
+
+	elseif k == Enum.KeyCode.D then
+		keysPressed.D = false
+	end
+end)
+
+--------------------------------------------------------------------
+-- START BUTTON
+--------------------------------------------------------------------
+
+local mainGui = Instance.new("ScreenGui", player.PlayerGui)
+
+local toggleButton = Instance.new("TextButton", mainGui)
+toggleButton.Size = UDim2.new(0,180,0,50)
+toggleButton.Position = UDim2.new(0.5,-90,0.85,0)
+toggleButton.BackgroundColor3 = Color3.fromRGB(0,180,100)
+toggleButton.Text = "START"
+
+Instance.new("UICorner", toggleButton)
+
+--------------------------------------------------------------------
+-- START / STOP
+--------------------------------------------------------------------
+
+toggleButton.Activated:Connect(function()
+
+	isDriving = not isDriving
+
+	if isDriving then
+
+		carBase = Instance.new("Part", workspace)
+		carBase.Size = Vector3.new(4,1,4)
+		carBase.Transparency = 1
+		carBase.CanCollide = false
+
+		idleSound = Instance.new("Sound", rootPart)
+		idleSound.SoundId = "rbxassetid://9112787518"
+		idleSound.Looped = true
+		idleSound:Play()
+
+		moveSound = Instance.new("Sound", rootPart)
+		moveSound.SoundId = "rbxassetid://132463978281798"
+		moveSound.Looped = true
+		moveSound:Play()
+
+		driftSound = Instance.new("Sound", rootPart)
+		driftSound.SoundId = "rbxassetid://3467612565"
+		driftSound.Looped = true
+		driftSound.Volume = 0
+		driftSound:Play()
+
+		brakeSound = Instance.new("Sound", rootPart)
+		brakeSound.SoundId = "rbxassetid://249755575"
+		brakeSound.Looped = false
+		brakeSound.Volume = 1.5
+		brakeSound.PlaybackSpeed = 0.8
+
+		bodyVelocity = Instance.new("BodyVelocity", carBase)
+		bodyVelocity.MaxForce = Vector3.new(1e5,0,1e5)
+
+		bodyGyro = Instance.new("BodyGyro", carBase)
+		bodyGyro.MaxTorque = Vector3.new(1e5,1e5,1e5)
+		bodyGyro.P = 15000
+
+		bodyForce = Instance.new("BodyForce", carBase)
+
+		local weld = Instance.new("Weld", carBase)
+		weld.Part0 = carBase
+		weld.Part1 = rootPart
+
+		targetRotation = select(2, rootPart.CFrame:ToEulerAnglesYXZ())
+
+		driftSmokeEmitter = createDriftSmokeEmitter()
+
+		humanoid.Sit = true
+
+		screenGui.Enabled = true
+
+		toggleButton.Text = "STOP"
+
+	else
+
+		currentSpeed = 0
+		wasBraking = false
+
+		if idleSound then idleSound:Destroy() end
+		if moveSound then moveSound:Destroy() end
+		if driftSound then driftSound:Destroy() end
+		if brakeSound then brakeSound:Destroy() end
+		if carBase then carBase:Destroy() end
+		if driftSmokeEmitter then driftSmokeEmitter:Destroy() end
+
+		humanoid.Sit = false
+
+		screenGui.Enabled = false
+
+		toggleButton.Text = "START"
+	end
+end)
+
+--------------------------------------------------------------------
+-- MAIN LOOP
+--------------------------------------------------------------------
+
+runService.Heartbeat:Connect(function(deltaTime)
+
+	if not isDriving or not carBase then
+		return
+	end
+
+	local absSpeed = math.abs(currentSpeed)
+
+	for i = 1, 4 do
+
+		if absSpeed > 10 then
+
+			tempTimers[i] = tempTimers[i] + deltaTime
+
+			if tempTimers[i] >= 8 then
+				tyreTemps[i] = math.min(tyreTemps[i] + 1, 90)
+				tempTimers[i] = 0
+			end
+
+		else
+			tyreTemps[i] = math.max(tyreTemps[i] - 0.02, 20)
+		end
+
+		tyreLabels[i].Text = math.floor(tyreTemps[i]) .. "°C"
+
+		tyreFrames[i].BackgroundColor3 =
+			tyreTemps[i] < 50
+			and Color3.fromRGB(0,180,255)
+			or Color3.fromRGB(0,255,100)
+	end
+
+	local isCold = tyreTemps[1] < 50
+	local grip = isCold and 0.6 or 1.0
+
+	if keysPressed.W then
+
+		currentSpeed = math.min(
+			currentSpeed + acceleration,
+			currentMaxSpeed
+		)
+
+	elseif keysPressed.S then
+
+		if currentSpeed > 0 then
+
+			if not wasBraking and brakeSound then
+				brakeSound:Play()
+			end
+
+			wasBraking = true
+
+		else
+
+			wasBraking = false
+
+			if brakeSound and brakeSound.IsPlaying then
+				brakeSound:Stop()
+			end
+		end
+
+		currentSpeed = math.max(
+			currentSpeed - 1.2,
+			reverseSpeed
+		)
+
+	else
+
+		currentSpeed = currentSpeed * (1 - inertiaFriction)
+
+		wasBraking = false
+
+		if brakeSound and brakeSound.IsPlaying then
+			brakeSound:Stop()
+		end
+	end
+
+	local dynamicTurning = 0
+
+	if absSpeed > 0.1 then
+		dynamicTurning = math.max(
+			0.9,
+			(turningSpeed * grip) / (1 + (absSpeed / 60))
+		)
+	end
+
+	if keysPressed.A then
+		targetRotation = targetRotation + dynamicTurning * deltaTime
+	end
+
+	if keysPressed.D then
+		targetRotation = targetRotation - dynamicTurning * deltaTime
+	end
+
+	local drifting =
+		isCold
+		and absSpeed > 35
+		and (keysPressed.A or keysPressed.D)
+
+	if driftSmokeEmitter then
+		driftSmokeEmitter.Rate = drifting and 100 or 0
+	end
+
+	if driftSound then
+		driftSound.Volume = drifting and 0.7 or 0
+	end
+
+	bodyGyro.CFrame = CFrame.Angles(0,targetRotation,0)
+
+	local lerpStr = isCold and 0.06 or 0.15
+
+	bodyVelocity.Velocity = bodyVelocity.Velocity:Lerp(
+		carBase.CFrame.LookVector * currentSpeed,
+		lerpStr
+	)
+
+	if moveSound then
+
+		moveSound.PlaybackSpeed =
+			0.7 + (absSpeed / currentMaxSpeed) * 1.5
+
+		moveSound.Volume =
+			0.2 + (absSpeed / currentMaxSpeed) * 0.8
+	end
+
+	speedText.Text = tostring(math.floor(absSpeed))
+
+	local rayParams = RaycastParams.new()
+
+	rayParams.FilterDescendantsInstances = {
+		character,
+		carBase
+	}
+
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+	local result = workspace:Raycast(
+		rootPart.Position,
+		Vector3.new(0,-5,0),
+		rayParams
+	)
+
+	if result then
+
+		local compression =
+			targetDistance
+			- (rootPart.Position - result.Position).Magnitude
+
+		local velocity =
+			(compression - lastVerticalError) / deltaTime
+
+		lastVerticalError = compression
+
+		bodyForce.Force = Vector3.new(
+			0,
+			math.max(
+				0,
+				(compression * stiffness)
+				+ (velocity * damping)
+				+ (workspace.Gravity * 100)
+			),
+			0
+		)
+
+	else
+
+		bodyForce.Force = Vector3.new(0,0,0)
+
+		lastVerticalError = 0
+	end
+end)

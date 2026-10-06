@@ -1,1 +1,21 @@
--- In the works
+-- Functions
+
+local Aries = {}
+
+function Aries:CreateWindow(...)
+    -- create GUI
+end
+
+function Aries:CreateTab(...)
+    -- create tab
+end
+
+function Aries:CreateButton(...)
+    -- create button
+end
+
+function Aries:CreateToggle(...)
+    -- create toggle
+end
+
+return Aries
